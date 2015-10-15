@@ -1,19 +1,20 @@
 package generated.scala.io
 
 import com.google.protobuf.ByteString
-import java.io.{InputStream, IOException, DataInput, DataOutput}
+import java.io.{InputStream, ByteArrayInputStream, IOException, DataInput, DataOutput}
 import java.nio.charset.Charset
 
 import org.apache.hadoop.conf._
 import org.apache.hadoop.fs._
 import org.apache.hadoop.io.Text
-import org.apache.hadoop.util.LineReader
+import org.apache.hadoop.io.compress.GzipCodec
 
 /**
  * Constructs a logical file stream by concatenating the streams of an arbitrary number of physical files.
  * The stream can be opened at any byte offset and it will automatically seek to the next full line.
  * Each path in the stream can be backed by a different Hadoop-supported filesystem (inclues local, HDFS and S3).
  */
+
 object DeliteFileInputStream {
 
   // We sometimes have an issue with checksums when appending to DeliteFileOutputStreams using a
@@ -24,8 +25,15 @@ object DeliteFileInputStream {
 
   /* Construct a new DeliteFileInputStream */
   def apply(paths: Seq[String], charsetName: Option[String] = None, delimiter: Option[Array[Byte]] = None, offset: Long = 0L): DeliteFileInputStream = {
-    val charset = charsetName map { checkCharset } getOrElse Charset.defaultCharset
+    val charset = checkCharset(charsetName)
     val conf = new Configuration()
+    //AWS S3 configuration
+    conf.setIfUnset("fs.s3a.access.key", sys.env.getOrElse("AWS_ACCESS_KEY_ID", ""))
+    conf.setIfUnset("fs.s3a.secret.key", sys.env.getOrElse("AWS_SECRET_KEY", ""))
+    import com.amazonaws.regions._
+    val region = sys.env.getOrElse("AWS_S3_REGION", sys.env.getOrElse("AWS_DEFAULT_REGION", "us-east-1"))
+    conf.setIfUnset("fs.s3a.endpoint", Region.getRegion(Regions.fromName(region)).getServiceEndpoint("s3"))
+
     // We pre-load the file handles so that we can easily copy the stream wrapper instance at run-time
     val fileHandles = getFiles(conf, paths)
     new DeliteFileInputStream(conf, fileHandles, charset, delimiter, offset)
@@ -49,12 +57,14 @@ object DeliteFileInputStream {
       listStatus(hPath).sortBy(f => f.getPath.getName)
     }
     else if (fs.isFile(hPath)) Array(fs.getFileStatus(hPath))
-    else throw new IllegalArgumentException("Path " + p + " does not appear to be a valid file or directory")
+    else throw new IOException("Path " + p + " does not appear to be a valid file or directory")
   }
 
   /* Validate that the specified charset name is legal and supported */
-  private def checkCharset(charsetName: String) = {
-    val charset = Charset.forName(charsetName)
+  private def checkCharset(charsetName: Option[String]) = {
+    val charset = charsetName map { Charset.forName } getOrElse Charset.defaultCharset
+    
+    //we only support backwards-compatible charsets (all extended ascii and utf-8); this is a hacky way of checking that
     val dec = charset.newDecoder
     if (dec.maxCharsPerByte != 1f || dec.averageCharsPerByte != 1f)
       throw new IOException("Unsupported Charset: " + charset.displayName)
@@ -93,11 +103,20 @@ object DeliteFileInputStream {
 class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], charset: Charset, delimiter: Option[Array[Byte]], val streamOffset: Long) {
   private[this] var reader: LineReader = _
   private[this] var text: Text = _
-  private[this] var pos: Long = _
-  private[this] var filePos: Int = _
 
+  private[this] var pos: Long = _ //relative position within current physical file
+  private[this] var fileIdx: Int = _ //current index into 'files' array
+  private[this] var fileName: String = _
+  private[this] var fileIsCompressed: Boolean = _
+
+  private[this] var endIdx: Int = _
+  private[this] var endPos: Long = _
+  private[this] var endOfStream: Boolean = false
+
+  private[this] val codec = new GzipCodec //TODO: support multiple codecs
+  codec.setConf(conf)
+  
   final val size: Long = files.map(_.getLen).sum
-  final def position = pos
 
   /* Initialize. This is only required / used when opening a stream directly (i.e. not via multiloop) */
   if (size > 0) {
@@ -107,61 +126,90 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
     throw new IOException("DeliteFileInputStream opened with size == 0. Paths were: " + files.map(_.getPath.getName).mkString("[",",","]"))
   }
 
+  private def setState(_pos: Long, _fileIdx: Int, _fileName: String) = {
+    pos = _pos; fileIdx = _fileIdx; fileName = _fileName
+    fileIsCompressed = fileName.endsWith(codec.getDefaultExtension)
+  }
+
   /* Determine the file that this logical index corresponds to, as well as the byte offset within the file. */
-  private def findFileOffset(start: Long) = {
-    var offset = start
-    var fileIdx = 0
-    fileOffset = 0
-    while (offset >= files(fileIdx).getLen) {
-      fileOffset += files(fileIdx).getLen
-      offset -= fileOffset
-      fileIdx += 1
+  private def findFileOffsets(start: Long, end: Long) = {
+    //find the last equivalent local position for 'start'
+    var startOffset = start
+    var startIdx = 0
+    while (startIdx < files.length && startOffset >= files(startIdx).getLen) {
+      startOffset -= files(startIdx).getLen
+      startIdx += 1
     }
-    (fileIdx, offset)
+
+    //find the first equivalent local position for 'end' (subtly different comparator)
+    var endOffset = end
+    var endIdx = 0
+    while (endIdx < files.length && endOffset > files(endIdx).getLen) {
+      endOffset -= files(endIdx).getLen
+      endIdx += 1
+    }
+
+    ((startIdx, startOffset), (endIdx, endOffset))
   }
 
   /*
-   * Return an input stream and offset corresponding to the logical byte index 'start'.
-   * Offset refers to the number of bytes inside the physical resource that this stream starts at.
+   * Return an input stream opened at the next full line after 'offset'
+   * Offset refers to the number of bytes inside the physical resource at 'path'
    */
-  private def getInputStream(start: Long) = {
-    if (start >= size) throw new IndexOutOfBoundsException("Cannot load stream at pos " + start + ", stream size is: " + size)
-    val (fileIdx, offset) = findFileOffset(start)
-    filePos = fileIdx
-    val byteStream = openInputStream(fileIdx)
-    if (offset != 0) { // jump to next available new line (and valid char)
-      if (byteStream.skip(offset-1) != (offset-1)) throw new IOException("Unable to skip desired bytes in file")
-    }
-    (byteStream, offset)
-  }
-
-  private def openInputStream(fileIdx: Int) = {
-    if (fileIdx >= files.length) throw new IndexOutOfBoundsException("Cannot open file at index: " + fileIdx + ", num files is: " + files.length)
-    val path = files(fileIdx).getPath
+  private def openInputStream(path: Path, offset: Long) = {
     val fs = path.getFileSystem(conf)
-    fileName = path.getName
     fs.setVerifyChecksum(DeliteFileInputStream.CHECKSUM_ENABLED)
-    fs.open(path)
+
+    val rawStream = fs.open(path)
+    val byteStream = if (fileIsCompressed) codec.createInputStream(rawStream) else rawStream
+    val reader = new LineReader(byteStream, delimiter.getOrElse(null))
+
+    if (offset != 0) { 
+      byteStream.seek(offset-1) //seek to offset; -1 ensures we won't skip a full line on first readLine() 
+      pos += (reader.readLine(text) - 1) //jump to next full line
+    }
+    reader
   }
 
-  /* Set the line reader to a newline-aligned input stream corresponding to logical byte index 'start' */
-  final def openAtNewLine(startIndex: Long) {
-    close()
-    val start = streamOffset + startIndex
-    val (byteStream, offset) = getInputStream(start)
-    reader = new LineReader(byteStream, delimiter.getOrElse(null))
-    text = new Text
-    pos = start
-    if (offset != 0) { // jump to next available new line (and valid char)
-      pos += (reader.readLine(text) - 1)
+  private def openFileStream(startIdx: Int, offset: Long) = {
+    if (startIdx >= files.length) throw new IndexOutOfBoundsException("Cannot open file at index: " + startIdx + ", num files is: " + files.length)
+    val path = files(startIdx).getPath
+    setState(offset, startIdx, path.getName)
+
+    if (fileIsCompressed && offset != 0) { 
+      if (fileIdx < files.length-1) { //skip to beginning of next file
+        val path = files(fileIdx+1).getPath
+        setState(0, fileIdx+1, path.getName)
+        openInputStream(path, 0)
+      } else { //return empty stream
+        setState(endPos, endIdx, path.getName)
+        new LineReader(new ByteArrayInputStream(new Array[Byte](0)), delimiter.getOrElse(null))
+      }
+    } else {
+      openInputStream(path, offset)
     }
+  }
+
+  /* Set the line reader to a newline-aligned input stream corresponding to logical byte index 'startPosition' */
+  final def openAtNewLine(startPosition: Long, endPosition: Long = size) = {
+    close()
+    val start = streamOffset + startPosition
+    val end = math.min(streamOffset + endPosition, size)
+    if (start >= size) throw new IllegalArgumentException("Cannot load stream at position " + start + ", stream size is: " + size)
+    if (end < start) throw new IllegalArgumentException("End of stream ("+end+") cannot be less than start of stream ("+start+")")
+
+    val ((startIndex, startOffset), (endIndex, endOffset)) = findFileOffsets(start, end)
+    endIdx = endIndex; endPos = endOffset
+    text = new Text
+    reader = openFileStream(startIndex, startOffset)
+    checkEndOfStream()
+    this
   }
 
   /* Construct a copy of this DeliteFileInputStream, starting at logical byte index 'start' */
-  final def openCopyAtNewLine(start: Long): DeliteFileInputStream = {
+  final def openCopyAtNewLine(start: Long, end: Long = size): DeliteFileInputStream = {
     val copy = new DeliteFileInputStream(conf, files, charset, delimiter, streamOffset)
-    copy.openAtNewLine(start)
-    copy
+    copy.openAtNewLine(start, end)
   }
 
   final def open() {
@@ -171,41 +219,48 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
   /* Read the next line */
   private def readLineInternal() {
     var length = reader.readLine(text)
-    if (length == 0) {
+    while (length == 0 && fileIdx < files.length-1) {
       reader.close()
-      if (pos >= size) {
-        text = null
-        return
-      }
-      else {
-        filePos += 1
-        fileOffset = pos
-        val nextByteStream = openInputStream(filePos)
-        reader = new LineReader(nextByteStream, delimiter.getOrElse(null))
-        length = reader.readLine(text)
-        assert(length != 0, "Filesystem returned an invalid input stream for position " + pos)
-      }
+      reader = openFileStream(fileIdx+1, 0)
+      length = reader.readLine(text)
     }
     pos += length
+    checkEndOfStream()
   }
 
   /* Read the next line and interpret it as a String */
   final def readLine(): String = {
-    readLineInternal()
-    if (text eq null) null
-    else new String(text.getBytes, 0, text.getLength, charset)
+    if (endOfStream) null
+    else {
+      readLineInternal()
+      new String(text.getBytes, 0, text.getLength, charset)
+    }
   }
 
   /* Read the next line and interpret it as bytes */
   final def readBytes(): Array[Byte] = {
-    readLineInternal()
-    if (text eq null) null
+    if (endOfStream) null
     else {
+      readLineInternal()
       val record = new Array[Byte](text.getLength)
       System.arraycopy(text.getBytes, 0, record, 0, text.getLength)
       record
     }
   }
+
+  private def checkEndOfStream() = {
+    if (fileIdx >= files.length-1 && reader.isEmpty) { //out of files to read
+      endOfStream = true
+    }
+    else if (fileIsCompressed) { //done at end of file
+      if (fileIdx >= endIdx && reader.isEmpty) endOfStream = true
+    } 
+    else { //done when past endPos
+      if (fileIdx >= endIdx && pos >= endPos) endOfStream = true
+    }
+  }
+
+  final def isEmpty() = endOfStream
 
   /* Close the DeliteFileInputStream */
   final def close(): Unit = {
@@ -214,14 +269,13 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
       reader = null
     }
     text = null
-    pos = 0
+    setState(0, 0, "")
+    endIdx = 0; endPos = 0;
+    endOfStream = false;
   }
 
-  private[this] var fileName: String = _
-  private[this] var fileOffset: Long = _
-
   final def getFileLocation(): String = {
-    fileName + ":" + (pos - fileOffset)
+    fileName + ":" + pos
   }
 
 

@@ -146,6 +146,11 @@ def run(deg, params, opts):
     for j in jars:
         cp = cp + j + os.pathsep
 
+    # add all unmanaged libs
+    jars = [os.path.join(d,f) for (d, n, fs) in os.walk(delitecommon.HYPER_HOME + "/delite/runtime/lib/") for f in fs]
+    for j in jars:
+        cp = cp + j + os.pathsep
+
     # add local scala-virtualized classes, if we are using a local installation
     if os.getenv("SCALA_VIRTUALIZED_HOME"):
         cp = cp + os.getenv("SCALA_VIRTUALIZED_HOME") + "/lib/*" + os.pathsep

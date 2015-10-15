@@ -709,9 +709,8 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     if (inputStreamVars.length > 0) {
       assert(inputStreamVars.length == 1, "ERROR: don't know how to handle multiple stream inputs at once")
       val streamSym = inputStreamVars(0)
-      emitValDef(quote(streamSym)+"_stream", remap(streamSym.tp), fieldAccess(quote(streamSym),"openCopyAtNewLine(0)"))
-      emitValDef(quote(streamSym)+"_offset", remap(manifest[Long]), fieldAccess(quote(streamSym), "streamOffset"))
-      stream.println("while (" + fieldAccess(quote(streamSym)+"_stream", "position") + " < " + quote(streamSym) + "_offset + " + quote(op.size) + " ) {")
+      emitValDef(quote(streamSym)+"_stream", remap(streamSym.tp), fieldAccess(quote(streamSym),"openCopyAtNewLine(0," + quote(op.size) + ")"))
+      stream.println("while (!" + fieldAccess(quote(streamSym)+"_stream", "isEmpty()") + " ) {")
     }
     else {
       this match {
@@ -844,11 +843,10 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
       if (inputStreamVars.length > 0) {
         assert(inputStreamVars.length == 1, "ERROR: don't know how to handle multiple input streams at once")
         val streamSym = quote(inputStreamVars(0))+"_stream"
-        emitValDef(streamSym, remap(inputStreamVars(0).tp), fieldAccess(quote(inputStreamVars(0)),"openCopyAtNewLine(start)"))
-        emitValDef(streamSym+"_offset", remap(manifest[Long]), fieldAccess(streamSym, "streamOffset"))
-        emitValDef("isEmpty",remap(Manifest.Boolean), "end <= " + fieldAccess(streamSym,"position"))
+        emitValDef(streamSym, remap(inputStreamVars(0).tp), fieldAccess(quote(inputStreamVars(0)),"openCopyAtNewLine(start,end)"))
+        emitValDef("isEmpty",remap(Manifest.Boolean), fieldAccess(streamSym,"isEmpty()"))
         emitValDef("__act2",actType,methodCall("init",List("__act","-1","isEmpty",streamSym)))
-        stream.println("while (" + fieldAccess(streamSym,"position") + " < " + streamSym + "_offset + end) {")
+        stream.println("while (!" + fieldAccess(streamSym,"isEmpty()") + ") {")
         emitMethodCall("process",List("__act2","-1",streamSym))
         stream.println("}")
         stream.println(fieldAccess(streamSym, "close();"))
