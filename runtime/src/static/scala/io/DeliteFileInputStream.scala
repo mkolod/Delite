@@ -29,10 +29,11 @@ object DeliteFileInputStream {
     val conf = new Configuration()
     //AWS S3 configuration
     conf.setIfUnset("fs.s3a.access.key", sys.env.getOrElse("AWS_ACCESS_KEY_ID", ""))
-    conf.setIfUnset("fs.s3a.secret.key", sys.env.getOrElse("AWS_SECRET_KEY", ""))
+    conf.setIfUnset("fs.s3a.secret.key", sys.env.getOrElse("AWS_SECRET_ACCESS_KEY", ""))
     import com.amazonaws.regions._
     val region = sys.env.getOrElse("AWS_S3_REGION", sys.env.getOrElse("AWS_DEFAULT_REGION", "us-east-1"))
     conf.setIfUnset("fs.s3a.endpoint", Region.getRegion(Regions.fromName(region)).getServiceEndpoint("s3"))
+    conf.setIfUnset("fs.s3a.connection.maximum", sys.env.getOrElse("AWS_S3_MAX_CONNECTIONS", "100"))
 
     // We pre-load the file handles so that we can easily copy the stream wrapper instance at run-time
     val fileHandles = getFiles(conf, paths)
@@ -63,7 +64,7 @@ object DeliteFileInputStream {
   /* Validate that the specified charset name is legal and supported */
   private def checkCharset(charsetName: Option[String]) = {
     val charset = charsetName map { Charset.forName } getOrElse Charset.defaultCharset
-    
+
     //we only support backwards-compatible charsets (all extended ascii and utf-8); this is a hacky way of checking that
     val dec = charset.newDecoder
     if (dec.maxCharsPerByte != 1f || dec.averageCharsPerByte != 1f)
@@ -115,16 +116,8 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
 
   private[this] val codec = new GzipCodec //TODO: support multiple codecs
   codec.setConf(conf)
-  
-  final val size: Long = files.map(_.getLen).sum
 
-  /* Initialize. This is only required / used when opening a stream directly (i.e. not via multiloop) */
-  if (size > 0) {
-    open()
-  }
-  else {
-    throw new IOException("DeliteFileInputStream opened with size == 0. Paths were: " + files.map(_.getPath.getName).mkString("[",",","]"))
-  }
+  final val size: Long = files.map(_.getLen).sum
 
   private def setState(_pos: Long, _fileIdx: Int, _fileName: String) = {
     pos = _pos; fileIdx = _fileIdx; fileName = _fileName
@@ -164,8 +157,8 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
     val byteStream = if (fileIsCompressed) codec.createInputStream(rawStream) else rawStream
     val reader = new LineReader(byteStream, delimiter.getOrElse(null))
 
-    if (offset != 0) { 
-      byteStream.seek(offset-1) //seek to offset; -1 ensures we won't skip a full line on first readLine() 
+    if (offset != 0) {
+      byteStream.seek(offset-1) //seek to offset; -1 ensures we won't skip a full line on first readLine()
       pos += (reader.readLine(text) - 1) //jump to next full line
     }
     reader
@@ -176,7 +169,7 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
     val path = files(startIdx).getPath
     setState(offset, startIdx, path.getName)
 
-    if (fileIsCompressed && offset != 0) { 
+    if (fileIsCompressed && offset != 0) {
       if (fileIdx < files.length-1) { //skip to beginning of next file
         val path = files(fileIdx+1).getPath
         setState(0, fileIdx+1, path.getName)
@@ -193,6 +186,7 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
   /* Set the line reader to a newline-aligned input stream corresponding to logical byte index 'startPosition' */
   final def openAtNewLine(startPosition: Long, endPosition: Long = size) = {
     close()
+
     val start = streamOffset + startPosition
     val end = math.min(streamOffset + endPosition, size)
     if (start >= size) throw new IllegalArgumentException("Cannot load stream at position " + start + ", stream size is: " + size)
@@ -206,6 +200,11 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
     this
   }
 
+  /* Construct a copy of this DeliteFileInputStream, but set to a different offset. */
+  final def withOffset(offset: Long) = {
+    new DeliteFileInputStream(conf, files, charset, delimiter, offset)
+  }
+
   /* Construct a copy of this DeliteFileInputStream, starting at logical byte index 'start' */
   final def openCopyAtNewLine(start: Long, end: Long = size): DeliteFileInputStream = {
     val copy = new DeliteFileInputStream(conf, files, charset, delimiter, streamOffset)
@@ -213,7 +212,12 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
   }
 
   final def open() {
-    openAtNewLine(0)
+    if (size > 0) {
+      openAtNewLine(0)
+    }
+    else {
+      throw new IOException("DeliteFileInputStream opened with size == 0. Paths were: " + files.map(_.getPath.getName).mkString("[",",","]"))
+    }
   }
 
   /* Read the next line */
@@ -254,7 +258,7 @@ class DeliteFileInputStream(conf: Configuration, files: Array[FileStatus], chars
     }
     else if (fileIsCompressed) { //done at end of file
       if (fileIdx >= endIdx && reader.isEmpty) endOfStream = true
-    } 
+    }
     else { //done when past endPos
       if (fileIdx >= endIdx && pos >= endPos) endOfStream = true
     }
