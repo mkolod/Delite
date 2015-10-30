@@ -262,18 +262,18 @@ trait CGenDeliteFileReaderOps extends CGenFat {
   import IR._
 
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) = rhs match {
-    case DeliteFileInputStreamNew(paths, Const(null), Const(null), Const(0)) =>
-      // C++ variable length args does not allow string types, so use underlying char *
-      if (cppMemMgr == "refcnt")
-        stream.println(remap(sym.tp) + " " + quote(sym) + "(new cppFileStream(" + paths.length + "," + paths.map(quote(_) + ".c_str()").mkString(",") + "));")
-      else
-        emitValDef(sym, "new cppFileStream(" + paths.length + "," + paths.map(quote(_) + ".c_str()").mkString(",") + ")")
-    case DeliteFileInputStreamNew(paths, charset, delimiter, offset) =>
-      throw new GenerationFailedException("FileReader: custom charset/delimiter/offset is not suppported by C codegen")
-    case DeliteFileInputStreamReadLine(stream,idx) =>
-      emitValDef(sym, quote(stream) + "_stream->readLine("+resourceInfoSym+")")
-    case DeliteFileInputStreamSize(stream) =>
-      emitValDef(sym, quote(stream) + "->size")
+    // case DeliteFileInputStreamNew(paths, Const(null), Const(null), Const(0)) =>
+    //   // C++ variable length args does not allow string types, so use underlying char *
+    //   if (cppMemMgr == "refcnt")
+    //     stream.println(remap(sym.tp) + " " + quote(sym) + "(new cppFileStream(" + paths.length + "," + paths.map(quote(_) + ".c_str()").mkString(",") + "));")
+    //   else
+    //     emitValDef(sym, "new cppFileStream(" + paths.length + "," + paths.map(quote(_) + ".c_str()").mkString(",") + ")")
+    // case DeliteFileInputStreamNew(paths, charset, delimiter, offset) =>
+    //   throw new GenerationFailedException("FileReader: custom charset/delimiter/offset is not suppported by C codegen")
+    // case DeliteFileInputStreamReadLine(stream,idx) =>
+    //   emitValDef(sym, quote(stream) + "_stream->readLine("+resourceInfoSym+")")
+    // case DeliteFileInputStreamSize(stream) =>
+    //   emitValDef(sym, quote(stream) + "->size")
     case _ => super.emitNode(sym, rhs)
   }
 
