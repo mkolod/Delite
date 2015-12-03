@@ -7,7 +7,7 @@ import ppl.delite.runtime.graph.targets.Targets
  * Author: Kevin J. Brown
  * Date: Nov 29, 2010
  * Time: 11:21:14 PM
- * 
+ *
  * Pervasive Parallelism Laboratory (PPL)
  * Stanford University
  */
@@ -67,14 +67,16 @@ object EOP_Global {
       lock.unlock
     }
     res
-  }  
+  }
 }
 
 object EOP_Kernel {
 
-  def apply[T](): T = apply(null.asInstanceOf[T])
+  def apply[T](): T = apply(null)
 
-  def apply[T](result: T): T = {
+  def apply[T](resourceInfo: generated.scala.ResourceInfo): T = apply(resourceInfo, null.asInstanceOf[T])
+
+  def apply[T](resourceInfo: generated.scala.ResourceInfo, result: T): T = {
     EOP_Global.put(result)
     result
   }
