@@ -43,22 +43,27 @@ object DeliteFileInputStream {
   /* Each path must refer to a valid filesystem, based on the Hadoop configuration object. */
   private def getFiles(conf: Configuration, paths:Seq[String]) = paths.toArray flatMap { p =>
     val hPath = new Path(p)
-    val fs = hPath.getFileSystem(conf)
+    val fs = hPath.getFileSystem(conf) //works on globbed paths as long as the prefix is constant
+    val expanded = fs.globStatus(hPath)
+
+    if (expanded == null) throw new IOException("Path " + hPath + " does not appear to be a valid file or directory")
 
     // recurse into sub-directories
-    def listStatus(p: Path): Array[FileStatus] = {
-      fs.listStatus(p) flatMap { s =>
-        if (s.isDirectory) listStatus(s.getPath)
+    def listStatus(s: FileStatus): Array[FileStatus] = {
+      fs.listStatus(s.getPath) flatMap { s =>
+        if (s.isDirectory) listStatus(s)
         else Array(s)
       }
     }
 
-    if (fs.isDirectory(hPath)) {
-      // return sorted list of file statuses (numbered file chunks should be parsed in order)
-      listStatus(hPath).sortBy(f => f.getPath.getName)
+    expanded flatMap { status =>
+      if (status.isDirectory) {
+        // return sorted list of file statuses (numbered file chunks should be parsed in order)
+        listStatus(status).sortBy(f => f.getPath.getName)
+      }
+      else if (status.isFile) Array(status)
+      else throw new IOException("Path " + status.getPath + " does not appear to be a valid file or directory")
     }
-    else if (fs.isFile(hPath)) Array(fs.getFileStatus(hPath))
-    else throw new IOException("Path " + p + " does not appear to be a valid file or directory")
   }
 
   /* Validate that the specified charset name is legal and supported */
