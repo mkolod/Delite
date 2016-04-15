@@ -27,6 +27,14 @@ object DeliteFileInputStream {
   def apply(paths: Seq[String], charsetName: Option[String] = None, delimiter: Option[Array[Byte]] = None, offset: Long = 0L): DeliteFileInputStream = {
     val charset = checkCharset(charsetName)
     val conf = new Configuration()
+    //AWS S3 configuration
+    conf.setIfUnset("fs.s3a.access.key", sys.env.getOrElse("AWS_ACCESS_KEY_ID", ""))
+    conf.setIfUnset("fs.s3a.secret.key", sys.env.getOrElse("AWS_SECRET_ACCESS_KEY", ""))
+    import com.amazonaws.regions._
+    val region = sys.env.getOrElse("AWS_S3_REGION", sys.env.getOrElse("AWS_DEFAULT_REGION", "us-east-1"))
+    conf.setIfUnset("fs.s3a.endpoint", Region.getRegion(Regions.fromName(region)).getServiceEndpoint("s3"))
+    conf.setIfUnset("fs.s3a.connection.maximum", sys.env.getOrElse("AWS_S3_MAX_CONNECTIONS", "100"))
+
     // We pre-load the file handles so that we can easily copy the stream wrapper instance at run-time
     val fileHandles = getFiles(conf, paths)
     new DeliteFileInputStream(conf, fileHandles, charset, delimiter, offset)
