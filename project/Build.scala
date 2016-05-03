@@ -6,17 +6,18 @@ object DeliteBuild extends Build {
 
   System.setProperty("showSuppressedErrors", "false")
 
+  val scalaOrg = "org.scala-lang.virtualized"
   val virtScala = Option(System.getenv("SCALA_VIRTUALIZED_VERSION")).getOrElse("2.11.2")
   val virtBuildSettingsBase = Defaults.defaultSettings ++ Seq(
     organization := "stanford-ppl",
-    scalaOrganization := "org.scala-lang.virtualized",
+    scalaOrganization := scalaOrg,
     scalaVersion := virtScala,
     scalaHome := sys.env.get("SCALA_VIRTUALIZED_HOME").map(file),
 
     publishArtifact in (Compile, packageDoc) := false,
     libraryDependencies += virtualization_lms_core,
-    libraryDependencies += "org.scala-lang.virtualized" % "scala-library" % virtScala,
-    libraryDependencies += "org.scala-lang.virtualized" % "scala-compiler" % virtScala,
+    libraryDependencies += scalaOrg % "scala-library" % virtScala,
+    libraryDependencies += scalaOrg % "scala-compiler" % virtScala,
     libraryDependencies += "org.scalatest" % "scalatest_2.11" % "2.2.2",
 
     libraryDependencies += "org.apache.commons" % "commons-math" % "2.2",
@@ -26,7 +27,7 @@ object DeliteBuild extends Build {
     libraryDependencies += "org.apache.hadoop" % "hadoop-client" % "2.7.1",
     libraryDependencies += "org.apache.hadoop" % "hadoop-hdfs" % "2.7.1",
     libraryDependencies += "com.amazonaws" % "aws-java-sdk" % "1.10.6",
-
+    
     retrieveManaged := true,
     scalacOptions += "-Yno-generic-signatures",
     scalacOptions += "-Yvirtualize"

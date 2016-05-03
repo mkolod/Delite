@@ -52,15 +52,6 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
   lazy val deliteGenerator = new DeliteCodeGenPkg { val IR : DeliteApplication.this.type = DeliteApplication.this;
                                                val generators = DeliteApplication.this.generators; }
 
-  /*
-  private def setHostTargetCodegen(devicegen: GenericFatCodegen{ val IR: DeliteApplication.this.type }) = {
-    generators find { _.deviceTarget == devicegen.hostTarget } match {
-      case Some(hostgen) => devicegen.hostTargetCodegen = hostgen
-      case _ => throw new Exception("Cannot find the host target codegen of " + devicegen.toString)
-    }
-  }
-  */
-
 
   /*
    * misc state
@@ -102,20 +93,13 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
     //val distributedTransformer = new DistributedArrayTransformer{ val IR: DeliteApplication.this.type = DeliteApplication.this }
     //deliteGenerator.transformers :+= distributedTransformer
 
-    //System.out.println("Staging application")
-
     deliteGenerator.emitDataStructures(Config.buildDir + File.separator)
 
     for (g <- generators) {
       //TODO: Remove c generator specialization
       val baseDir = Config.buildDir + File.separator + g.toString + File.separator
       writeModules(baseDir)
-      g.initializeGenerator(baseDir + "kernels" + File.separator, args)
-      g match {
-        case gen:CCodegen => gen.headerStream.println("#include \"DeliteCpp.h\"")
-        case gen:CudaCodegen => gen.headerStream.println("#include \"DeliteCuda.h\"")
-        case _ =>
-      }
+      g.initializeGenerator(baseDir + "kernels" + File.separator)
     }
 
     // Generate a single source output for each generator when in debug mode
@@ -124,7 +108,7 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
         for (g <- generators) {
           val streamDebug = new PrintWriter(new FileWriter(Config.degFilename.replace(".deg","." + g.toString)))
           val baseDir = Config.buildDir + File.separator + g.toString + File.separator
-          g.initializeGenerator(baseDir + "kernels" + File.separator, args)
+          g.initializeGenerator(baseDir + "kernels" + File.separator)
           g match {
             case gen: CCodegen => streamDebug.println("#include \"DeliteStandaloneMain.h\"\n")
             case _ => //
@@ -135,7 +119,7 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
         }
       }
     }
-    deliteGenerator.initializeGenerator(Config.buildDir, args)
+    deliteGenerator.initializeGenerator(Config.buildDir)
     val sd = emitRegisteredSource(deliteGenerator, stream)
     deliteGenerator.finalizeGenerator()
 
@@ -158,7 +142,6 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
       try { g.emitTransferFunctions() }
       catch {
         case e: GenerationFailedException =>
-        case e: Exception => throw(e)
       }
     }
     */
@@ -167,6 +150,8 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
   }
 
   final def generateScalaSource(name: String, stream: PrintWriter) = {
+    /* NOTE: we're always emitting liftedMain here and disregarding
+             any use of registerFunction */
     reset
     stream.println("object "+name+"Main {"/*}*/)
     stream.println("def main(args: Array[String]) {"/*}*/)
@@ -180,6 +165,8 @@ trait DeliteApplication extends DeliteOpsExp with ScalaCompile with DeliteTransf
 
 
   final def execute(args: Array[String]) {
+    /* NOTE: we're always running liftedMain here and disregarding
+             any use of registerFunction */
     println("Delite Application Being Executed:[" + this.getClass.getName + "]")
 
     println("******Executing the program*********")

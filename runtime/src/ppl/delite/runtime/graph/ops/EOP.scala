@@ -2,6 +2,7 @@ package ppl.delite.runtime.graph.ops
 
 import java.util.concurrent.locks.ReentrantLock
 import ppl.delite.runtime.graph.targets.Targets
+import java.util.concurrent.CyclicBarrier
 
 /**
  * Author: Kevin J. Brown
@@ -25,7 +26,9 @@ class EOP(val id: String, var outputTypesMap: Map[Targets.Value,Map[String,Strin
 
   def isDataParallel = false
 
-  def task = "ppl.delite.runtime.graph.ops.EOP_Kernel"
+  def task = if (scheduledOn(Targets.Scala)) "ppl.delite.runtime.graph.ops.EOP_Kernel"
+             else if (scheduledOn(Targets.Cpp)) "cppDeepCopy"
+             else throw new RuntimeException("Unsupported target for EOP")
 
   def cost = 0
   def size = 0
@@ -34,40 +37,23 @@ class EOP(val id: String, var outputTypesMap: Map[Targets.Value,Map[String,Strin
 
 object EOP_Global {
 
-  /**
-   * EOP implementation
-   */
-  private val lock = new ReentrantLock
-  private val end = lock.newCondition
-  private var notDone: Boolean = true
   private var result: Any = null
+  private var barrier: CyclicBarrier = null
 
-  def put(res: Any) {
-    lock.lock
-    try {
-      notDone = false
-      result = res
-      end.signal
-    }
-    finally {
-      lock.unlock
-    }
-  }
+  def put(res: Any) { result = res }
 
   def take(): Any = {
-    var res: Any = null
-    lock.lock
-    try {
-      while (notDone) end.await
-      notDone = true //reset for re-use
-      res = result
-      result = null
-    }
-    finally {
-      lock.unlock
-    }
+    val res = result
+    result = null
     res
   }
+
+  def initializeBarrier(count: Int) {
+    barrier = new CyclicBarrier(count)
+  }
+
+  def awaitBarrier() { barrier.await() }
+
 }
 
 object EOP_Kernel {

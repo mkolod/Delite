@@ -278,15 +278,14 @@ trait CGenDeliteFileReaderOps extends CGenFat {
   }
 
   override def remap[A](m: Manifest[A]): String = m.erasure.getSimpleName match {
-    case "DeliteFileInputStream" if (cppMemMgr == "refcnt") => wrapSharedPtr("cppFileStream")
-    case "DeliteFileInputStream" => "cppFileStream"
+    case "DeliteFileInputStream" if (cppMemMgr == "refcnt") => wrapSharedPtr("DeliteFileInputStream")
+    case "DeliteFileInputStream" => "DeliteFileInputStream"
     case _ => super.remap(m)
   }
 
   override def getDataStructureHeaders(): String = {
     val out = new StringBuilder
-    out.append("#include \"cppFileStream.h\"\n")
+    out.append("#include \"DeliteFileInputStream.h\"\n")
     super.getDataStructureHeaders() + out.toString
   }
-
 }

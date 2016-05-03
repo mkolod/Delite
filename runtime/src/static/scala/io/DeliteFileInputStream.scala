@@ -6,8 +6,8 @@ import java.nio.charset.Charset
 
 import org.apache.hadoop.conf._
 import org.apache.hadoop.fs._
-import org.apache.hadoop.io.Text
 import org.apache.hadoop.io.compress.GzipCodec
+import org.apache.hadoop.io.Text
 
 /**
  * Constructs a logical file stream by concatenating the streams of an arbitrary number of physical files.

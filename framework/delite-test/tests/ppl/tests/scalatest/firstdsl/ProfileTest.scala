@@ -19,5 +19,5 @@ trait ProfileTest extends DeliteTestModule with ProfileApplication {
 }
 
 class FirstDSLTestSuite extends DeliteSuite {
-  def testProfileDSL() { compileAndTest(ProfileTestRunner) }
+  def testProfileDSL() { compileAndTest(ProfileTestRunner, enforceFullCoverage = false) }
 }

@@ -9,8 +9,7 @@ import ppl.delite.runtime.cost._
 import ppl.delite.runtime.codegen.kernels.cuda.SingleTask_GPU_Generator
 import ppl.delite.runtime.codegen.{Compilers,CCompile}
 
-class AccStaticScheduler(numScala: Int, numCpp: Int, numCuda: Int, numOpenCL: Int) extends StaticScheduler with ParallelUtilizationCostModel {
-
+class AccStaticScheduler(numScala: Int, numCpp: Int, numCuda: Int, numOpenCL: Int) extends StaticScheduler with ParallelUtilizationCostModel with ScheduleOptimizer {
   private val totalScala = Config.numThreads
   private val totalCpp = Config.numCpp
   private val gpu = totalScala + totalCpp
@@ -122,23 +121,14 @@ class AccStaticScheduler(numScala: Int, numCpp: Int, numCuda: Int, numOpenCL: In
     else {
       if (Config.enableTaskParallelism) cluster(op, schedule, resourceList)
       else scheduleOn(op, schedule, resourceList(0))
-      Compilers(OpHelper.scheduledTarget(resourceList(0))) match {
-        case c:CCompile => c.addKernel(op)
-        case _ => //
-      }
     }
   }
 
   protected def scheduleGPU(op: DeliteOP, graph: DeliteTaskGraph, schedule: PartialSchedule) {
     if (op.isDataParallel)
       split(op, graph, schedule, Seq(gpu))
-    else {
+    else
       scheduleOn(op, schedule, gpu)
-      Compilers(OpHelper.scheduledTarget(gpu)) match {
-        case c:CCompile => c.addKernel(op)
-        case _ => throw new RuntimeException("GPU compiler should be extending C compiler.")
-      }
-    }
   }
 
   private var nextThread = 0
@@ -183,7 +173,8 @@ class AccStaticScheduler(numScala: Int, numCpp: Int, numCuda: Int, numOpenCL: In
       if (op.supportsTarget(Targets.Cuda)) Targets.Cuda else Targets.OpenCL
     }
     else if (op.supportsTarget(Targets.Cpp) && numCpp > 0) Targets.Cpp
-    else Targets.Scala
+    else if (op.supportsTarget(Targets.Scala) && numScala > 0) Targets.Scala
+    else sys.error(op + " cannot be run on any available hardware target")
   }
 
   //TODO: Separate hardware and programming model

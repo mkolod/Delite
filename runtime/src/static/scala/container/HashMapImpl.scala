@@ -1,12 +1,10 @@
 package generated.scala.container
 
 
-// specialization bug on multiple ctors: (_indices: Array[Int], _keys: Array[K], _values: Array[V], _sz: Int)
 final class HashMapImpl[@specialized K: Manifest](indsz: Int, datasz: Int) {
-  private val loadfactor_d2 = 0.4f / 2
+  private val loadfactor_d2 = 0.2f
   private var indices = fill(HashMapImpl.nextPow2(indsz))(-1)
   private var keys = new Array[K](datasz)
-  private var blocksizes: Array[Int] = _
   private var sz = 0
   private var relbits = Integer.numberOfTrailingZeros(indices.length / 2)
 
@@ -15,9 +13,9 @@ final class HashMapImpl[@specialized K: Manifest](indsz: Int, datasz: Int) {
   private val MAX_ARRAY_SIZE = Math.pow(2,30).toInt
 
   import HashMapImpl.nextPow2
-
-  def this() = this(128, 52)
-
+  
+  def this() = this(512, 128)
+  
   @inline private def absolute(hc: Int) = {
     val mask = hc >> 31
     (hc + mask) ^ mask
@@ -89,7 +87,7 @@ growth threshold: %d
 
   private def fill(length: Int)(value: Int) = {
     val a = new Array[Int](length)
-    java.util.Arrays.fill(a, value) //scala fill is much more expensive
+    java.util.Arrays.fill(a, value) //Scala fill is expensive
     a
   }
 
@@ -141,10 +139,6 @@ growth threshold: %d
 
   def unsafeSize = sz
 
-  def unsafeBlockSizes = blocksizes
-
-  def unsafeSetBlockSizes(_blkszs: Array[Int]) = blocksizes = _blkszs
-
   def unsafeSetKeys(_keys: Array[K]) {
     keys = _keys
   }
@@ -160,26 +154,13 @@ growth threshold: %d
   }
 }
 
-
-final class Bucket[@specialized T] {
-  var array: Array[T] = _
-  var size = 0
-  //var next: Bucket[T] = _
-
-  //def dcSize = size
-  def dcApply(idx: Int) = array(idx)
-  def dcUpdate(idx: Int, x: T) = array(idx) = x
-
-  override def toString = "Bucket(size: %d; values: %s)".format(size, array.take(size).mkString(", "))
-}
-
-
 object HashMapImpl {
   def range(n: Int) = {
     val hm = new HashMapImpl[Int](n * 5 + 1, n * 3)
     for (i <- 0 until n) hm.put(i)
     hm
   }
+
   def nextPow2(x: Int) = {
     var c = x - 1;
     c |= c >>>  1;

@@ -26,8 +26,8 @@ trait DeliteTestConfig {
   if (propFile.exists) props.load(new FileReader(propFile))
 
   // test parameters
-  val verbose = props.getProperty("tests.verbose", "false").toBoolean
-  val verboseDefs = props.getProperty("tests.verboseDefs", "false").toBoolean
+  val verbose = props.getProperty("tests.verbose", "false") != "false"
+  val verboseDefs = props.getProperty("tests.verboseDefs", "false") != "false"
   val threads = props.getProperty("tests.threads", "1").split(",").map(_.toInt)
   val cacheSyms = props.getProperty("tests.cacheSyms", "true").toBoolean
   val javaHome = new File(props.getProperty("java.home", ""))
@@ -36,6 +36,12 @@ trait DeliteTestConfig {
   val runtimeExternalProc = false // javaHome, scalaHome and runtimeClasses only required if runtimeExternalProc is true. should this be configurable? or should we just remove execTestExternal?
   val deliteTestTargets = props.getProperty("tests.targets", "scala").split(",")
   val useBlas = props.getProperty("tests.extern.blas", "false").toBoolean
+
+  var cppWhiteList = Seq("StaticData", "DeliteTestMkString", "DeliteTestAppend", "DeliteTestStrConcat", "DeliteTestFwNew", //test operations are Scala-only by design
+                         "DeliteTestBwNew", "DeliteTestBwWrite", "DeliteTestBwClose", "DeliteTestPrintLn", "scala.collection.mutable.ArrayBuffer",
+                         "DeliteArraySeq[", "Array[scala.virtualization.lms.common.Record{", //C++ doesn't currently support non-Soa'd Array[Record]
+                         "scala.Function") //C++ doesn't currently support Function objects
+
 }
 
 trait DeliteSuite extends Suite with DeliteTestConfig {
@@ -43,7 +49,8 @@ trait DeliteSuite extends Suite with DeliteTestConfig {
   val scalaCompiler = new File(scalaHome, "lib/scala-compiler.jar")
   val scalaLibrary = new File(scalaHome, "lib/scala-library.jar")
 
-  val CHECK_MULTILOOP = true
+  def checkMultiLoop = false
+  def enforceFullCoverage = true
 
   def validateParameters() {
     if (runtimeExternalProc && !javaBin.exists) throw new TestFailedException("Could not find valid java installation in " + javaHome, 3)
@@ -60,15 +67,14 @@ trait DeliteSuite extends Suite with DeliteTestConfig {
     uniqueTestName(app) + "-test.deg"
   }
 
-  def compileAndTest(app: DeliteTestRunner, checkMultiLoop: Boolean = false) {
+  def compileAndTest(app: DeliteTestRunner, checkMultiLoop: Boolean = checkMultiLoop, enforceFullCoverage: Boolean = enforceFullCoverage) { compileAndTestAll(Seq(app), checkMultiLoop, enforceFullCoverage) }
+
+  def compileAndTestAll(apps: Seq[DeliteTestRunner], checkMultiLoop: Boolean = checkMultiLoop, enforceFullCoverage: Boolean = enforceFullCoverage) {
     println("=================================================================================================")
-    println("TEST: " + app.toString)
+    println("TEST: " + apps.mkString(","))
     println("=================================================================================================")
 
     validateParameters()
-    val args = Array(degName(app))
-    app.resultBuffer = new ArrayBuffer[Boolean] with SynchronizedBuffer[Boolean]
-
     // Enable specified target code generators
     for(t <- deliteTestTargets) {
       t match {
@@ -80,24 +86,33 @@ trait DeliteSuite extends Suite with DeliteTestConfig {
       }
     }
 
+    //enable strict checking that scala and cpp kernels are actually generated
+    Config.generationFailedWhitelist = Map() //reset from previous tests
+    if (enforceFullCoverage) {
+      Config.generationFailedWhitelist += "scala" -> Seq() //no exceptions
+      Config.generationFailedWhitelist += "cpp" -> cppWhiteList //exclude ops provided by test suite
+    }
+
     if(useBlas) Config.useBlas = true
 
     // check if all multiloops in the test app are generated for specified targets
-    if(checkMultiLoop) {
-      val generateCUDA = Config.generateCUDA
-      Config.generateCUDA = true
-      stageTest(app)
-      val graph = ppl.delite.runtime.Delite.loadDeliteDEG(degName(app))
-      val targets = List("scala","cuda") // Add other targets
-      for(op <- graph.totalOps if op.isInstanceOf[OP_MultiLoop]) {
-        targets foreach { t =>  if(!op.supportsTarget(Targets(t))) sys.error(t + " was unable to generate op " + op) }
+    for (app <- apps) {
+      app.resultBuffer = new ArrayBuffer[Boolean] with SynchronizedBuffer[Boolean]
+      if(checkMultiLoop) {
+        val generateCUDA = Config.generateCUDA
+        Config.generateCUDA = true
+        stageTest(app)
+        val graph = ppl.delite.runtime.Delite.loadDeliteDEG(degName(app))
+        val targets = List("scala","cuda") // Add other targets
+        for(op <- graph.totalOps if op.isInstanceOf[OP_MultiLoop]) {
+          targets foreach { t =>  if(!op.supportsTarget(Targets(t))) sys.error(t + " was unable to generate op " + op) }
+        }
+        Config.generateCUDA = generateCUDA
       }
-      Config.generateCUDA = generateCUDA
+      else { // Just stage test
+        stageTest(app)
+      }
     }
-    else { // Just stage test
-      stageTest(app)
-    }
-
 
     // Set runtime parameters for targets and execute runtime
     for(target <- deliteTestTargets) {
@@ -107,17 +122,24 @@ trait DeliteSuite extends Suite with DeliteTestConfig {
           ppl.delite.runtime.Config.numCpp = numCpp
           ppl.delite.runtime.Config.numCuda = numCuda
           ppl.delite.runtime.Config.numOpenCL = numOpenCL
+          ppl.delite.runtime.Config.testMode = true
         }
 
         target match {
           case "scala" => runtimeConfig(numScala = num)
           case "cpp" => runtimeConfig(numCpp = num)
-          case "cuda" => runtimeConfig(numScala = num, numCuda = 1) //scala or cpp (or both) for host?
+          case "cuda" => runtimeConfig(numScala = num, numCpp = 1, numCuda = 1) // C++ kernels launched on GPU host
           case "opencl" => runtimeConfig(numScala = num, numOpenCL = 1)
           case _ => assert(false)
         }
-        val outStr = execTest(app, args, target, num)
-        checkTest(app, outStr)
+
+        val resetCache = apps.length > 1 && target != "scala" // HACK: we need to clear the native code cache to compile multiple native apps in the same run (due to naming collisions)
+        for (app <- apps) {
+          val args = Array(degName(app))
+          val outStr = execTest(app, args, target, num)
+          checkTest(app, outStr)
+          if (resetCache) org.apache.commons.io.FileUtils.deleteDirectory(new File(ppl.delite.runtime.Config.codeCacheHome))
+        }
       }
     }
   }
@@ -246,7 +268,7 @@ trait DeliteTestRunner extends DeliteTestModule with DeliteTestConfig with Delit
     delite_test_bw_write(out, s2)
     delite_test_bw_close(out)
   }
-
+  
 }
 
 trait DeliteTestModule extends Base {

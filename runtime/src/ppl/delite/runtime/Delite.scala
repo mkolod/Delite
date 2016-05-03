@@ -5,10 +5,10 @@ import org.apache.commons.io._
 
 import codegen._
 import executor._
-import graph.ops.{EOP_Global, Arguments}
+import graph.ops.{EOP_Global, Arguments, Sync}
 import graph.targets.Targets
 import graph.{TestGraph, DeliteTaskGraph}
-import profiler.Profiling
+import profiler.{Profiling, SamplerThread}
 import scheduler._
 
 /**
@@ -35,15 +35,13 @@ object Delite {
 
   private def printArgs(args: Array[String]) {
     if(args.length == 0) {
-      println("Not enough arguments.\nUsage: [Launch Runtime Command] filename.deg arguments*")
+      println("Usage: delite degfile [args...]")
       sys.exit(-1)
     }
-    println("Delite Runtime executing with the following arguments:")
-    println(args.mkString(","))
-  }
-
-  private def printConfig() {
-    println("Delite Runtime executing with: " + Config.numThreads + " Scala thread(s), " + Config.numCpp + " Cpp thread(s), " + Config.numCuda + " Cuda(s), " + Config.numOpenCL + " OpenCL(s)")
+    if (Config.verbose) {
+      println("Delite Runtime executing with the following arguments: " + args.mkString(","))
+      println("Delite Runtime executing with " + Config.numThreads + " Scala thread(s), " + Config.numCpp + " C++ thread(s), " + Config.numCuda + " Cuda GPU(s), " + Config.numOpenCL + " OpenCL GPU(s)")
+    }
   }
 
   def main(args: Array[String]) {
@@ -58,8 +56,8 @@ object Delite {
   def embeddedMain(args: Array[String], staticData: Map[String,_]) {
     inputArgs = args
     printArgs(args)
-    printConfig()
-
+    Config.degFilePath = args(0)
+    
     walkAndRun(args(0), List(args.drop(1)), staticData)
   }
 
@@ -87,6 +85,7 @@ object Delite {
 
     def abnormalShutdown() {
       if (executor != null) executor.shutdown()
+      if (SamplerThread.isAlive) SamplerThread.stop()
       if (!Config.alwaysKeepCache)
         FileUtils.deleteQuietly(new File(Config.codeCacheHome)) //clear the code cache (could be corrupted)
     }
@@ -117,6 +116,11 @@ object Delite {
 
       //schedule
       scheduler.schedule(graph)
+      Sync.addSync(graph)
+
+      //merge C++ schedule into CUDA schedule
+      if (Config.numCuda > 0)
+        scheduler.scheduleNativeGPU(graph)
 
       //compile
       Compilers.compileSchedule(graph)
@@ -128,12 +132,14 @@ object Delite {
         DeliteMesosExecutor.awaitWork()
       }
       else { //master executor (including single-node execution)
+        EOP_Global.initializeBarrier(executable.resources.count(!_.isEmpty)+1) //wait on all resources with work
         for (i <- 1 to Config.numRuns) {
           if (Config.performWalk) println("Beginning Execution Run " + i)
-          Profiling.startRun()
+          if (i == Config.numRuns) Profiling.startRun()
           executor.run(executable)
-          appResult = EOP_Global.take() //await the end of the application program
-          Profiling.endRun()
+          EOP_Global.awaitBarrier() //await the end of the application program
+          appResult = EOP_Global.take() //get the result of the application
+          if (i == Config.numRuns) Profiling.endRun()
           System.gc()
         }
       }

@@ -7,7 +7,8 @@ import scala.virtualization.lms.common.Record
 /* Tests the generated code functionality for Delite ops, using core Delite data structures.
 */
 
-trait DeliteTestBase extends DeliteTestModule with DeliteTestDSLApplication {
+trait DeliteTestBase extends DeliteTestModule with DeliteTestOps with DeliteTestDSLApplication {
+  
   def Complex(re: Rep[Double], im: Rep[Double]) = new Record { val real = re; val imag = im }
 
   type Chars = Record { val a: Char; val b: Char; val c: Char }
@@ -48,7 +49,7 @@ trait DeliteMap extends DeliteTestBase {
     collectBuf(vs2, 500, i => Complex(5, -5))
 
     val va = DeliteArrayBuffer.fromFunction(500){ i => Single(i) }
-    println(va) //force creation of va
+    delite_test_println(va) //force creation of va
     collectBuf(va.map(_.a), 500, i => i)
 
     val ve = DeliteArrayBuffer.fromFunction(0){ i => 0 }
@@ -426,6 +427,26 @@ trait DeliteIfThenElse extends DeliteTestBase {
       }
     collect(z == 3)
 
+    def checkConstants(i: Rep[Int]) = {
+      collect { (if (i > 100) 1 else 2) == 2 } //int
+      collect { (if (i > 101) 1l else 2l) == 2l } //long
+      collect { (if (i > 102) 1f else 2f) == 2f } //float
+      collect { (if (i > 103) 1.0 else 2.0) == 2.0 } //double
+      collect { (if (i > 104) "hello" else "world") == "world" } //string
+      collect { (if (i > 105) 'a' else 'b') == 'b' } //char as int TODO: why does the char widen to an int without the type?
+
+      val c: Rep[Char] = if (i > 106) 'x' else 'y' //char
+      collect(c == 'y')
+    }
+
+    //check quoting different constant types in kernels
+    for (i <- 0 until 10) {
+      checkConstants(i)
+    }
+
+    //check quoting different constant types in DEG
+    checkConstants(p)
+
     mkReport
   }
 }
@@ -499,23 +520,28 @@ trait DeliteFileReader extends DeliteTestBase {
 }
 
 class DeliteOpSuite extends DeliteSuite {
-  def testDeliteMap() { compileAndTest(DeliteMapSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteFlatMap() { compileAndTest(DeliteFlatMapSuiteRunner) }
-  def testDeliteZip() { compileAndTest(DeliteZipSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteReduce() { compileAndTest(DeliteReduceSuiteRunner, CHECK_MULTILOOP) }
-  //def testDeliteReduce2() { compileAndTest(DeliteReduce2SuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteMapReduce() { compileAndTest(DeliteMapReduceSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteFilter() { compileAndTest(DeliteFilterSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteForeach() { compileAndTest(DeliteForeachSuiteRunner) }
-  def testDeliteZipWithReduceTuple() { compileAndTest(DeliteZipWithReduceTupleSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteNestedMap() { compileAndTest(DeliteNestedMapSuiteRunner) }
-  def testDeliteHorizontalElems() { compileAndTest(DeliteHorizontalElemsSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteNestedZip() { compileAndTest(DeliteNestedZipSuiteRunner) }
-  def testDeliteNestedReduce() { compileAndTest(DeliteNestedReduceSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteNestedMapReduce() { compileAndTest(DeliteNestedMapReduceSuiteRunner, CHECK_MULTILOOP) }
-  def testDeliteNestedForeach() { compileAndTest(DeliteNestedForeachSuiteRunner) }
+  override def checkMultiLoop = true
+  override def enforceFullCoverage = true
+  cppWhiteList ++= Seq("ArrayNew") //used in Foreach
+
+  def testDeliteMap() { compileAndTest(DeliteMapSuiteRunner) }
+  def testDeliteZip() { compileAndTest(DeliteZipSuiteRunner) }
+  def testDeliteReduce() { compileAndTest(DeliteReduceSuiteRunner) }
+  //def testDeliteReduce2() { compileAndTest(DeliteReduce2SuiteRunner) }
+  def testDeliteZipWithReduceTuple() { compileAndTest(DeliteZipWithReduceTupleSuiteRunner) }
+  def testDeliteMapReduce() { compileAndTest(DeliteMapReduceSuiteRunner) }
+  def testDeliteFilter() { compileAndTest(DeliteFilterSuiteRunner) }
+  def testDeliteNestedReduce() { compileAndTest(DeliteNestedReduceSuiteRunner) }
+  def testDeliteNestedMapReduce() { compileAndTest(DeliteNestedMapReduceSuiteRunner) }
+  def testDeliteHorizontalElems() { compileAndTest(DeliteHorizontalElemsSuiteRunner) }
   def testDeliteIfThenElse() { compileAndTest(DeliteIfThenElseSuiteRunner) }
-  def testDeliteGroupBy() { compileAndTest(DeliteGroupBySuiteRunner) }
-  def testDeliteGroupByReduce() { compileAndTest(DeliteGroupByReduceSuiteRunner) }
-  def testDeliteFileReader() { compileAndTest(DeliteFileReaderSuiteRunner) }
+
+  def testDeliteFlatMap() { compileAndTest(DeliteFlatMapSuiteRunner, checkMultiLoop = false) }
+  def testDeliteForeach() { compileAndTest(DeliteForeachSuiteRunner, checkMultiLoop = false) }
+  def testDeliteNestedMap() { compileAndTest(DeliteNestedMapSuiteRunner, checkMultiLoop = false) }
+  def testDeliteNestedZip() { compileAndTest(DeliteNestedZipSuiteRunner, checkMultiLoop = false) }
+  def testDeliteNestedForeach() { compileAndTest(DeliteNestedForeachSuiteRunner, checkMultiLoop = false) }
+  def testDeliteGroupBy() { compileAndTest(DeliteGroupBySuiteRunner, checkMultiLoop = false) }
+  def testDeliteGroupByReduce() { compileAndTest(DeliteGroupByReduceSuiteRunner, checkMultiLoop = false) }
+  def testDeliteFileReader() { compileAndTest(DeliteFileReaderSuiteRunner, checkMultiLoop = false, enforceFullCoverage = false) }
 }

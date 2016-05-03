@@ -36,7 +36,7 @@ trait NestedLoopMappingExp extends Expressions {
   case object DimY extends Dimension { override def toString = "\"dim\":\"y\"" }
   case object DimZ extends Dimension { override def toString = "\"dim\":\"z\"" }
   def dimConstraint(c: Dimension => Boolean) = LoopConstraint(c, _ => true, _ => true)
-  
+
   // Span Constraint
   abstract class Span { def toString(quote: Exp[Any] => String): String = toString() }
   case object SpanOne extends Span
@@ -262,8 +262,6 @@ trait NestedLoopMappingAnalysis extends FatBlockTraversal with LoopFusionOpt wit
       case e: MultiDimMappingFailedException =>
         printInfo("[WARNING] MultiDimMapping Analysis Failed: " + e.msg)
         resetLoopAnalysis
-      case e: Exception =>
-        throw (e)
     }
     printInfo("Loop Analysis Success")
   }
@@ -297,9 +295,9 @@ trait NestedLoopMappingAnalysis extends FatBlockTraversal with LoopFusionOpt wit
         processArrayAccess(i)
       case Reflect(DeliteArrayUpdate(_,i,_), u, es) =>
         processArrayAccess(i)
-      case Reflect(StructUpdate(_,_,i,_), u, es) =>
+      case Reflect(NestedAtomicWrite(_,_,DeliteArrayUpdate(_,i,_)), u, es) =>
         //TODO: handle nested array update in struct
-        processArrayAccess(i.head)
+        processArrayAccess(i)
       case _ =>
         traverseFatBlock(blocks(rhs))
     }

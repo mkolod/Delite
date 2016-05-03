@@ -5,9 +5,7 @@ import scala.collection.immutable.SortedSet
 import scala.collection.mutable.{HashSet, HashMap}
 import _root_.scala.util.parsing.json.JSON
 
-import ppl.delite.runtime.Config
-import ppl.delite.runtime.DeliteMesosScheduler
-import ppl.delite.runtime.profiler.Profiler
+import ppl.delite.runtime.{Config, DeliteMesosScheduler, Exceptions}
 import ppl.delite.runtime.scheduler.PartialSchedule
 import ops._
 import targets._
@@ -31,32 +29,16 @@ object DeliteTaskGraph {
   def buildFromParsedJSON(json: Any) = {
     implicit val graph = new DeliteTaskGraph
     json match {
-      case degm: Map[Any,Any] => try { parseDEGMap(degm) } catch { case e: Exception => e.printStackTrace; throw e; }
+      case degm: Map[Any,Any] => parseDEGMap(degm)
       case err@_ => mapNotFound(err)
     }
     enforceRestrictions(graph)
   }
 
   def enforceRestrictions(graph: DeliteTaskGraph)  = {
-    //FIXME: this is required because we can't currently have a C++ file reader interoperate with a Scala file writer,
-    //so we only allow C++ file reading when there are no file writers in the program
-    //this should be removed when that is fixed
-    val outputStream = "DeliteFileOutputStream"
-    val inputStream = "DeliteFileInputStream"
-    var hasOutput = false
-
-    graph.visitAll { op => if (op.outputType contains outputStream) hasOutput = true }
-    if (hasOutput) {
-      graph.visitAll { op =>
-        if ((op.outputType contains inputStream) || (op.getInputs.exists(i => i._1.outputType(i._2) contains inputStream))) {
-          op.supportedTargets.clear()
-          op.supportedTargets += Targets.Scala
-        }
-      }
-    }
-
     //if the multiloop reader fails to generate for a target the filestream should not be on that target either
     //this is required because we currently don't allow stream objects to be copied between targets
+    val inputStream = "DeliteFileInputStream"
     var streams: List[DeliteOP] = Nil
     graph.visitAll { op => if (op.outputType contains inputStream) streams = op :: streams }
     for (op <- streams) {
@@ -185,8 +167,7 @@ object DeliteTaskGraph {
         (getFieldString(sourceContext, "fileName"), getFieldString(sourceContext, "line").toInt, getFieldString(sourceContext, "opName"))
     }
 
-    // TODO: maybe it would be better to add source info to DeliteOP?
-    Profiler.sourceInfo += (id -> (fileName, line, opName))
+    Exceptions.sourceInfo += (id -> (fileName, line, opName))
 
     val newop = opType match {
       case "OP_Single" => new OP_Single(id, "kernel_"+id, resultMap)
@@ -471,7 +452,8 @@ object DeliteTaskGraph {
     val argIdx = getFieldString(op, "index").toInt
     val argTypes = processReturnTypes(op, id)
     val args = new Arguments(id, argIdx, argTypes)
-    args.supportedTargets ++= argTypes.keySet
+    if (Config.noJVM) args.supportedTargets ++= argTypes.keySet
+    else args.supportedTargets += Targets.Scala //args always come from JVM by default
     graph.registerOp(args)
     graph._result = (args, id)
   }
@@ -487,6 +469,8 @@ object DeliteTaskGraph {
     val tpe = getFieldString(op, "Type")
 
     val EOP = new EOP(id, resultTypes, (tpe,value))
+    if (Config.noJVM) EOP.supportedTargets ++= resultTypes.keySet
+    else EOP.supportedTargets += Targets.Scala //result always returned inside JVM by default
     if (tpe == "symbol") {
       val result = getOp(value)
       EOP.addInput(result, value)

@@ -2,7 +2,7 @@
 
 from optparse import OptionParser
 import multiprocessing
-import os, sys
+import os, sys, datetime
 import math
 from socket import gethostname
 from string import *
@@ -11,7 +11,7 @@ from time import localtime, strftime
 
 import delitecommon
 
-DSLs = ['optiml','optila','optiql','deliszt','optigraph','opticvx','multi-dsl']
+DSLs = ['optiql','multi-dsl']
 LMS_HOME = os.getenv("LMS_HOME") #should be set if LMS is provided directly from class files rather than a lib_managed jar
 
 def err(s):
@@ -135,7 +135,8 @@ def stage(runner, params, opts):
     cp = cp + DELITE_HOME + "/target/" + scala_major_id + "/test-classes" + os.pathsep
 
     # add all managed libs
-    jars = [os.path.join(d,f) for (d, n, fs) in os.walk(delitecommon.HYPER_HOME + "/lib_managed/") for f in fs]
+    # caveat: scalatest pulls in some non-virtualized scala dependencies but they conflict with the scala-virtualized versions
+    jars = [os.path.join(d,f) for (d, n, fs) in os.walk(delitecommon.HYPER_HOME + "/lib_managed/") if not (d.count("/org.scala-lang/") > 0) for f in fs]
     for j in jars:
       cp = cp + j + os.pathsep
 
@@ -157,7 +158,7 @@ def stage(runner, params, opts):
         print("LMS_HOME is UNDEFINED")
       print(java_opts)
 
-    print "==  Generating DEG file with options: " + str(opts)
+    print "[" + datetime.datetime.now().isoformat(' ') + "]: Generating DEG file with options: " + str(opts)
     java_cmd = delitecommon.JAVA_HOME + "/bin/java " + java_opts + " " + runner + " " + ' '.join(params)
     #print java_cmd
     ecode = os.system(java_cmd)
