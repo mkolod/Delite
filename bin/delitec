@@ -140,10 +140,6 @@ def stage(runner, params, opts):
     for j in jars:
       cp = cp + j + os.pathsep
 
-    # add local scala-virtualized classes, if we are using a local installation
-    if os.getenv("SCALA_VIRTUALIZED_HOME"):
-      cp = cp + os.getenv("SCALA_VIRTUALIZED_HOME") + "/lib/*" + os.pathsep
-
     java_opts = java_opts + cp
     #os.putenv("JAVA_OPTS", java_opts)
 

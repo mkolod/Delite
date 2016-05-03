@@ -78,10 +78,7 @@ object Config {
 
   /* For containers, used in distributed mode */
   val slaveImage: String = getProperty("delite.slave.image", "")
-
-  /* For containers, used in distributed mode */
-  val slaveImage: String = getProperty("delite.slave.image", "")
-
+  
   /**
    * DEG specific, set after its parsed
    * TODO: handle this more rigorously

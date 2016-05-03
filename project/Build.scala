@@ -12,8 +12,6 @@ object DeliteBuild extends Build {
     organization := "stanford-ppl",
     scalaOrganization := scalaOrg,
     scalaVersion := virtScala,
-    scalaHome := sys.env.get("SCALA_VIRTUALIZED_HOME").map(file),
-
     publishArtifact in (Compile, packageDoc) := false,
     libraryDependencies += virtualization_lms_core,
     libraryDependencies += scalaOrg % "scala-library" % virtScala,
