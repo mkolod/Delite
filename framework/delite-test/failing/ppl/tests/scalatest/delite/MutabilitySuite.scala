@@ -36,10 +36,19 @@ trait SimpleWrites extends DeliteTestModule with DeliteTestDSLApplication {
 }
 
 // it is possible that aliasSyms and friends do not handle this case because it is nested mutable, which is supposed to be disallowed
-// although, it appears that this case would break even if the outer array was immutable (immutable collection of mutable objects), so maybe there is just a bug w/extractSyms
 
 // by rewriting nested updates to DeliteArray and only reflecting on the outer array, we have actually broken the model, since nothing
 // prevents us from binding to an inner element (and now we no longer get an error alerting us to the problem)
+
+/*
+ * Essentially the issue is that we rewrite writes to nested mutable objects to the outer objects, but we don't prevent users from acquiring a reference to the inner mutable object.
+ * The writes are "atomic" in the sense that they are coalesced to the outer object, but the reads are not, and reads to the inner object will not be ordered with respect to writes
+ * to the inner object (because the writes are seen as occuring on the outer object).
+ * 
+ * In addition there is currently no way of declaring the desired mutability of inner objects. 
+ * As soon as the outer object is marked mutable the entire nested structure becomes mutable so we cannot detect if writes to inner objects are illegal.
+ *
+ */
 
 object NestedWritesRunner extends DeliteTestRunner with DeliteTestDSLApplicationRunner with NestedWrites
 trait NestedWrites extends DeliteTestModule with DeliteTestDSLApplication {
@@ -47,14 +56,14 @@ trait NestedWrites extends DeliteTestModule with DeliteTestDSLApplication {
     val b = (DeliteArrayBuffer.fromFunction(10) { i => DeliteArray.fromFunction(20) { j => 1.0 } }).mutable
 
     val a = b(5)
-    a(5) = 9.2
+    a(5) = 9.2 // Based on the above definition 'a' should be immutable, but nested rewrites allow the write by redirecting it to 'b'
     a(13) = 1.9
 
     collect(a(5) == 9.2)
     collect(a(13) == 1.9)
 
     b(2).update(7,5.6)
-    b(5).update(5,3.2)
+    b(5).update(5,3.2) // Implicitly writes to 'a' as well as 'b', but this is not tracked
     b(8).update(1,8.2)
 
     b(7) = DeliteArray.fromFunction(10) { i => 0.0 }

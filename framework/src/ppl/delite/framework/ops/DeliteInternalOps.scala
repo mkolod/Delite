@@ -51,6 +51,7 @@ trait DeliteAnalysesOps extends Base {
   def delite_int_minus(lhs: Rep[Int], rhs: Rep[Int])(implicit pos: SourceContext): Rep[Int]
   def delite_int_times(lhs: Rep[Int], rhs: Rep[Int])(implicit pos: SourceContext): Rep[Int]
   def delite_unsafe_immutable[A:Manifest](lhs: Rep[A])(implicit pos: SourceContext): Rep[A]
+  def delite_unsafe_mutable[A:Manifest](lhs: Rep[A])(implicit pos:  SourceContext): Rep[A]
   def delite_boolean_negate(lhs: Rep[Boolean])(implicit pos: SourceContext): Rep[Boolean]
   def delite_equals[A:Manifest,B:Manifest](lhs: Rep[A], rhs: Rep[B])(implicit pos: SourceContext): Rep[Boolean]
   def delite_notequals[A:Manifest,B:Manifest](lhs: Rep[A], rhs: Rep[B])(implicit pos: SourceContext): Rep[Boolean] 
@@ -90,6 +91,7 @@ trait DeliteInternalOpsExpBase extends DeliteAnalysesOps
   case class DGreaterThan[T:Ordering:Manifest](lhs: Exp[T], rhs: Exp[T]) extends DefMN[T,Boolean]
 
   case class DUnsafeImmutable[A:Manifest](o: Exp[A]) extends Def[A] { val m = manifest[A]  }
+  case class DUnsafeMutable[A:Manifest](o: Exp[A]) extends Def[A] { val m = manifest[A] }
 
   def delite_boolean_negate(lhs: Exp[Boolean])(implicit pos: SourceContext): Exp[Boolean] = DBooleanNegate(lhs)
   def delite_equals[A:Manifest,B:Manifest](lhs: Exp[A], rhs: Exp[B])(implicit pos: SourceContext): Exp[Boolean] = DEqual(lhs, rhs)
@@ -107,6 +109,7 @@ trait DeliteInternalOpsExpBase extends DeliteAnalysesOps
     case s: Sym[_] if !isWritableSym(s) => lhs
     case _ => DUnsafeImmutable(lhs)
   }
+  def delite_unsafe_mutable[A:Manifest](lhs: Exp[A])(implicit pos: SourceContext) = reflectMutable(DUnsafeMutable(lhs))
 
   override def mirror[A:Manifest](e: Def[A], f: Transformer)(implicit pos: SourceContext): Exp[A] = (e match {
     case DBooleanNegate(x) => delite_boolean_negate(f(x))
@@ -120,6 +123,7 @@ trait DeliteInternalOpsExpBase extends DeliteAnalysesOps
     case e@DLessThan(a,b) => delite_less_than(f(a),f(b))(e.aev,e.mev,pos)
     case e@DGreaterThan(a,b) => delite_greater_than(f(a),f(b))(e.aev,e.mev,pos)
     case e@DUnsafeImmutable(a) => delite_unsafe_immutable(f(a))(mtype(e.m),pos)
+    case e@DUnsafeMutable(a) => delite_unsafe_mutable(f(a))(mtype(e.m),pos)
 
     case Reflect(DBooleanNegate(x), u, es) => reflectMirrored(Reflect(DBooleanNegate(f(x)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case Reflect(DIntPlus(x,y), u, es) => reflectMirrored(Reflect(DIntPlus(f(x),f(y)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
@@ -130,6 +134,7 @@ trait DeliteInternalOpsExpBase extends DeliteAnalysesOps
     case Reflect(e@DLessThan(a,b), u, es) => reflectMirrored(Reflect(DLessThan(f(a),f(b))(e.aev,e.mev), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case Reflect(e@DGreaterThan(a,b), u, es) => reflectMirrored(Reflect(DGreaterThan(f(a),f(b))(e.aev,e.mev), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case Reflect(e@DUnsafeImmutable(a), u, es) => reflectMirrored(Reflect(DUnsafeImmutable(f(a))(mtype(e.m)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
+    case Reflect(e@DUnsafeMutable(a), u, es) => reflectMirrored(Reflect(DUnsafeMutable(f(a))(mtype(e.m)), mapOver(f,u), f(es)))(mtype(manifest[A]), pos)
     case _ => super.mirror(e, f)
   }).asInstanceOf[Exp[A]] // why??
 
@@ -145,21 +150,25 @@ trait DeliteInternalOpsExpBase extends DeliteAnalysesOps
 
   override def aliasSyms(e: Any): List[Sym[Any]] = e match {
     case DUnsafeImmutable(a) => Nil
+    case DUnsafeMutable(a) => Nil
     case _ => super.aliasSyms(e)
   }
 
   override def containSyms(e: Any): List[Sym[Any]] = e match {
     case DUnsafeImmutable(a) => Nil
+    case DUnsafeMutable(a) => Nil
     case _ => super.containSyms(e)
   }
 
   override def extractSyms(e: Any): List[Sym[Any]] = e match {
     case DUnsafeImmutable(a) => Nil
+    case DUnsafeMutable(a) => Nil
     case _ => super.extractSyms(e)
   }
 
   override def copySyms(e: Any): List[Sym[Any]] = e match {
     case DUnsafeImmutable(a) => syms(a)
+    case DUnsafeMutable(a) => syms(a)
     case _ => super.copySyms(e)
   }
 }
@@ -221,7 +230,15 @@ trait DeliteInternalOpsExp extends DeliteInternalOpsExpBase {
   override def delite_unsafe_immutable[A:Manifest](lhs: Exp[A])(implicit pos: SourceContext) = lhs match {
     case Def(Struct(tag,elems)) => struct[A](tag, elems.map(t => (t._1, delite_imm_field(lhs, t._1, t._2))))
     case Def(d@Reflect(Struct(tag, elems), u, es)) => struct[A](tag, elems.map(t => (t._1, delite_imm_field(lhs, t._1, t._2))))
+    case StructType(tag,fields) => struct[A](tag, fields.map(t => (t._1, delite_imm_field(lhs, t._1, field(lhs, t._1)(t._2,pos)))))
     case _ => super.delite_unsafe_immutable(lhs)
+  }
+
+  override def delite_unsafe_mutable[A:Manifest](lhs: Exp[A])(implicit pos: SourceContext) = lhs match {
+    case Def(Struct(tag,elems)) => struct[A](tag, elems.map(t => (t._1, delite_unsafe_mutable(t._2)(mtype(t._2.tp),pos))))
+    case Def(d@Reflect(Struct(tag, elems), u, es)) => struct[A](tag, elems.map(t => (t._1, delite_unsafe_mutable(t._2)(t._2.tp,pos))))
+    case StructType(tag,fields) => struct[A](tag, fields.map(t => (t._1, delite_unsafe_mutable(field(lhs,t._1)(t._2,pos))(mtype(t._2),pos))))
+    case _ => super.delite_unsafe_mutable(lhs)
   }
 
   // -- end Struct unsafeImmutable rewrite
@@ -243,6 +260,7 @@ trait ScalaGenDeliteInternalOps extends ScalaGenBase {
     case DLessThan(a,b) => emitValDef(sym, quote(a) + " < " + quote(b))
     case DGreaterThan(a,b) => emitValDef(sym, quote(a) + " > " + quote(b))
     case DUnsafeImmutable(x) => emitValDef(sym, quote(x) + "// unsafe immutable")
+    case DUnsafeMutable(x) => emitValDef(sym, quote(x) + "// unsafe immutable")
     case _ => super.emitNode(sym,rhs)
   }
 }
@@ -263,6 +281,7 @@ trait CLikeGenDeliteInternalOps extends CLikeGenBase {
     case DLessThan(a,b) => emitValDef(sym, quote(a) + " < " + quote(b))
     case DGreaterThan(a,b) => emitValDef(sym, quote(a) + " > " + quote(b))
     case DUnsafeImmutable(x) => emitValDef(sym, quote(x) + "; // unsafe immutable")
+    case DUnsafeMutable(x) => emitValDef(sym, quote(x) + "; // unsafe immutable")
     case _ => super.emitNode(sym,rhs)
   }  
 }
