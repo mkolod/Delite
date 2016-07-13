@@ -34,7 +34,7 @@ trait DeliteTestConfig {
   val scalaHome = new File(props.getProperty("scala.vanilla.home", ""))
   val runtimeClasses = new File(props.getProperty("runtime.classes", ""))
   val runtimeExternalProc = false // javaHome, scalaHome and runtimeClasses only required if runtimeExternalProc is true. should this be configurable? or should we just remove execTestExternal?
-  val deliteTestTargets = props.getProperty("tests.targets", "scala").split(",")
+  var deliteTestTargets = props.getProperty("tests.targets", "scala").split(",")
   val useBlas = props.getProperty("tests.extern.blas", "false").toBoolean
 
   var cppWhiteList = Seq("StaticData", "DeliteTestMkString", "DeliteTestAppend", "DeliteTestStrConcat", "DeliteTestFwNew", //test operations are Scala-only by design
