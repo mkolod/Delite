@@ -33,7 +33,7 @@ object Config {
   val enableGPUObjReduce = getProperty("delite.enable.gpu.objreduce","true") != "false"
   val enableGPUMultiDim = getProperty("delite.enable.gpu.multidim","false") != "false"
   val nestedParallelism = getProperty("delite.nested_parallelism","false") != "false"
-  val intSize = getProperty("delite.integer.size", "default")
+  var intSize = getProperty("delite.integer.size", "default")
 
   //Print generationFailedException info
   val dumpException: Boolean = getProperty("delite.dump.exception", "false") != "false"

@@ -1,6 +1,7 @@
 package ppl.tests.scalatest.delite
 
 import ppl.tests.scalatest._
+import ppl.delite.framework.Config
 import ppl.delite.framework.datastructures._
 import scala.virtualization.lms.common.Record
 
@@ -535,7 +536,7 @@ class DeliteOpSuite extends DeliteSuite {
   def testDeliteNestedMapReduce() { compileAndTest(DeliteNestedMapReduceSuiteRunner) }
   def testDeliteHorizontalElems() { compileAndTest(DeliteHorizontalElemsSuiteRunner) }
   def testDeliteIfThenElse() { compileAndTest(DeliteIfThenElseSuiteRunner) }
-
+  
   def testDeliteFlatMap() { compileAndTest(DeliteFlatMapSuiteRunner, checkMultiLoop = false) }
   def testDeliteForeach() { compileAndTest(DeliteForeachSuiteRunner, checkMultiLoop = false) }
   def testDeliteNestedMap() { compileAndTest(DeliteNestedMapSuiteRunner, checkMultiLoop = false) }
@@ -544,4 +545,15 @@ class DeliteOpSuite extends DeliteSuite {
   def testDeliteGroupBy() { compileAndTest(DeliteGroupBySuiteRunner, checkMultiLoop = false) }
   def testDeliteGroupByReduce() { compileAndTest(DeliteGroupByReduceSuiteRunner, checkMultiLoop = false) }
   def testDeliteFileReader() { compileAndTest(DeliteFileReaderSuiteRunner, checkMultiLoop = false, enforceFullCoverage = false) }
+  
+  def testLongInt() {
+    Config.intSize = "long"
+    val saveTargets = deliteTestTargets //TODO: transferring data between jvm and c++ is not supported in int64 mode
+    deliteTestTargets = Array("scala")
+    compileAndTest(DeliteMapSuiteRunner, checkMultiLoop = false) // int64 mode is not supported by cuda
+    compileAndTest(DeliteFilterSuiteRunner, checkMultiLoop = false)
+    compileAndTest(DeliteReduceSuiteRunner, checkMultiLoop = false)
+    deliteTestTargets = saveTargets
+    Config.intSize = "default"
+  }
 }

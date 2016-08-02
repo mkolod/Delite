@@ -807,19 +807,19 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
       emitValDef("start", remap(Manifest.Long), "loopStart + loopSize*dIdx/numChunks")
       emitValDef("end", remap(Manifest.Long), "loopStart + loopSize*(dIdx+1)/numChunks")
       emitValDef("act", actType, methodCall("processRange", List("__act","start","end")))
-      emitUnalteredMethodCall(fieldAccess("sync","set"), List("dIdx","act"))
+      emitUnalteredMethodCall(fieldAccess("sync","set"), List(castInt32("dIdx"),"act"))
       emitAssignment("dIdx", unalteredMethodCall(fieldAccess("sync","getNextChunkIdx"), List()))
     stream.println("}")
     emitValDef("localStart", remap(Manifest.Int), "tid*numChunks/numThreads")
     emitValDef("localEnd", remap(Manifest.Int), "(tid+1)*numChunks/numThreads")
-    emitValDef("act", actType, unalteredMethodCall(fieldAccess("sync","get"), List("localStart")))
+    emitValDef("act", actType, unalteredMethodCall(fieldAccess("sync","get"), List(castInt32("localStart"))))
   }
 
   def emitCombineLocal() = {
     stream.println("//combine local")
     emitVarDef("i", remap(Manifest.Int), "localStart+1")
     stream.println("while (i < localEnd) {")
-      emitMethodCall("combine", List("act", unalteredMethodCall(fieldAccess("sync","get"),List("i"))))
+      emitMethodCall("combine", List("act", unalteredMethodCall(fieldAccess("sync","get"),List(castInt32("i")))))
       emitAssignment("i", "i+1")
     stream.println("}")
   }
@@ -829,35 +829,35 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     emitVarDef("half", remap(Manifest.Int), "tid")
     emitVarDef("step", remap(Manifest.Int), "1")
     stream.println("while ((half % 2 == 0) && (tid + step < numThreads)) {")
-      emitMethodCall("combine", List("act", unalteredMethodCall(fieldAccess("sync","getC"), List("tid+step"))))
+      emitMethodCall("combine", List("act", unalteredMethodCall(fieldAccess("sync","getC"), List(castInt32("(tid+step)")))))
       emitAssignment("half", "half / 2")
       emitAssignment("step", "step * 2")
     stream.println("}")
-    emitUnalteredMethodCall(fieldAccess("sync","setC"), List("tid","act"))
+    emitUnalteredMethodCall(fieldAccess("sync","setC"), List(castInt32("tid"),"act"))
   }
 
   def emitPostCombine(actType: String) {
     stream.println("//post combine")
     stream.print("if (tid != 0) ")
-    emitMethodCall("postCombine", List("act", unalteredMethodCall(fieldAccess("sync","getP"),List("tid-1"))))
+    emitMethodCall("postCombine", List("act", unalteredMethodCall(fieldAccess("sync","getP"),List(castInt32("(tid-1)")))))
     emitVarDef("j", remap(Manifest.Int), "localStart+1")
     emitVarDef("currentAct", actType, "act")
     stream.println("while (j < localEnd) {")
-      emitValDef("rhsAct", actType, unalteredMethodCall(fieldAccess("sync","get"), List("j")))
+      emitValDef("rhsAct", actType, unalteredMethodCall(fieldAccess("sync","get"), List(castInt32("j"))))
       emitMethodCall("postCombine", List("rhsAct", "currentAct"))
       emitAssignment("currentAct", "rhsAct")
       emitAssignment("j", "j+1")
     stream.println("}")
     stream.print("if (tid == numThreads-1) ")
     emitMethodCall("postProcInit", List("currentAct"))
-    emitUnalteredMethodCall(fieldAccess("sync","setP"), List("tid, currentAct"))
+    emitUnalteredMethodCall(fieldAccess("sync","setP"), List(castInt32("tid"), "currentAct"))
   }
 
   def emitPostProcess() {
     stream.println("//post process")
     emitVarDef("k", remap(Manifest.Int), "localStart")
     stream.println("while (k < localEnd) {")
-      emitMethodCall("postProcess", List(unalteredMethodCall(fieldAccess("sync","get"),List("k"))))
+      emitMethodCall("postProcess", List(unalteredMethodCall(fieldAccess("sync","get"),List(castInt32("k")))))
       emitAssignment("k", "k+1")
     stream.println("}")
   }
@@ -1248,7 +1248,7 @@ trait GenericGenDeliteOps extends BaseGenLoopsFat with BaseGenStaticData with Ba
     emitValDef("sync", syncType(actType), createInstance(syncType(actType), List(fieldAccess(kernelName+"_closure", "loopSize"), loopBodyAverageDynamicChunks(op.body).toString, resourceInfoSym)))
     emitVarDef("i", remap(Manifest.Int), "1")
     stream.println("while (i < "+unalteredMethodCall(fieldAccess("sync","numThreads"),List())+") {")
-      emitValDef("r", resourceInfoType, unalteredMethodCall(fieldAccess("sync","getThreadResource"),List("i")))
+      emitValDef("r", resourceInfoType, unalteredMethodCall(fieldAccess("sync","getThreadResource"),List(castInt32("i"))))
       emitWorkLaunch(kernelName, "r", "alloc", "sync")
       emitAssignment("i", "i+1")
     stream.println("}")
